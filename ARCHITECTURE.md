@@ -2,8 +2,8 @@
 
 This is plain JavaScript, HTML, and CSS. Node runs the files you see here directly.
 There is no bundle, minification, obfuscation, transpilation, framework, runtime
-package dependency, analytics, or remotely loaded script. The only browser page
-in the working application is the local sign-in form; it needs no JavaScript.
+package dependency, analytics, or remotely loaded script. The local sign-in and
+confirmation pages need no JavaScript.
 
 ## Start here
 
@@ -15,11 +15,12 @@ whole account enrollment operation. Then follow the functions it calls:
 | [bin/bna.js](bin/bna.js) | Start the command-line tool. |
 | [src/cli.js](src/cli.js) | Parse commands, print results, handle Ctrl-C. |
 | [src/enroll.js](src/enroll.js) | Coordinate login, one enrollment request, recovery, and config. |
-| [src/browser-login.js](src/browser-login.js) | Receive a pasted login token on a temporary loopback server. |
+| [src/browser-login.js](src/browser-login.js) | Receive the login callback or a pasted token, then wait for attachment confirmation. |
 | [src/open-browser.js](src/open-browser.js) | Open the default browser on Windows, WSL, macOS, or Linux. |
 | [web/login.html](web/login.html) | The sign-in form and instructions. |
-| [web/received.html](web/received.html) | Acknowledge receipt of the login token. |
-| [web/login.css](web/login.css) | Styles shared by both pages. |
+| [web/confirm.html](web/confirm.html) | Confirm attachment after sign-in returns. |
+| [web/received.html](web/received.html) | Explain that the CLI is completing enrollment. |
+| [web/login.css](web/login.css) | Styles shared by the local pages. |
 | [src/login-page.js](src/login-page.js) | Read those files, escape inserted text, and assemble each page. |
 | [src/modern.js](src/modern.js) | Exchange the login token and attach an authenticator over HTTPS. |
 | [src/config.js](src/config.js) | Read and write the Python-compatible INI file. |
@@ -43,9 +44,12 @@ They are not hidden credentials or obfuscated code.
    available port and a random path, and opens that local page.
 2. The user follows its link to Battle.net and enters their password there.
    This application has no password field for the Battle.net password.
-3. The user pastes the final address back into the local form. `parseSsoInput`
-   extracts its `ST` login token. A 404 at the final Battle.net address can be
-   expected: the address itself still contains the token.
+3. The sign-in link requests a full `http://localhost:<port>/login/<random>/callback`
+   return address. The receiver extracts its `ST` token, keeps it in memory, and
+   redirects to a confirmation page at `127.0.0.1` without a token in its URL.
+   The user selects **Continue and attach authenticator** before enrollment starts.
+   If automatic return fails, the local form also accepts a pasted return address
+   from the older manual sign-in flow, which can end on a Battle.net 404 page.
 4. `exchangeSsoToken` sends that token to `https://oauth.battle.net/oauth/sso`
    with the public mobile client identifier and `auth.authenticator` scope.
    The returned access token stays in process memory.
@@ -61,14 +65,17 @@ They are not hidden credentials or obfuscated code.
 The browser page embeds the local CSS file so its receipt page still works after
 its temporary server closes. Its content policy permits that CSS, blocks scripts
 and external assets, and restricts form submission to the same origin. The login
-server also checks the exact Host, Origin, path, method, and form size.
+server also checks the exact Host, Origin, path, method, and form size. Local pages
+use `Referrer-Policy: same-origin` so browser form POSTs retain their Origin header;
+external links receive no referrer. The callback's redirect uses `no-referrer` to
+avoid forwarding the token-bearing URL even to the local confirmation page.
 
 ## Where sensitive data lives
 
 | Data | Destination and lifetime |
 | --- | --- |
 | Battle.net password | Entered only on Battle.net's website. |
-| Pasted redirect address / login token | Local form and Node process; token sent to Battle.net's SSO endpoint. Not intentionally logged or saved by this program. The browser can retain the original address in history. |
+| Callback or pasted redirect address / login token | Local receiver and Node process; token sent to Battle.net's SSO endpoint after confirmation. Not intentionally logged or saved by this program. The browser can retain the original address in history. |
 | Access token | Node process memory; sent only to the enrollment endpoint by this flow. Not intentionally logged or saved. |
 | Authenticator secret and restore code | Local INI config and successful-response recovery JSON. Both are unencrypted. |
 | OTPAuth setup URL | Printed only by `show-url`; includes the secret. Copying it puts it on the clipboard, and saving it stores it in the chosen OTP provider. |
@@ -100,7 +107,7 @@ authenticator from Battle.net or remove an existing recovery backup.
 
 Uploading the HTML files to a static host does not run the Node enrollment flow.
 Exposing the current loopback server on a public interface does not turn it into
-a multi-user service: it accepts one session and exits after receiving its token.
+a multi-user service: it accepts one session and exits after attachment is confirmed.
 
 For a public service, publishing readable code helps people review it, but does
 not prove that a deployed server runs that exact code or keeps no additional logs.

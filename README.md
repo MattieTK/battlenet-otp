@@ -2,7 +2,7 @@
 
 Set up a Battle.net authenticator for **1Password or another compatible OTP provider**. Runs locally on your computer, with a browser page for sign-in.
 
-![The local Battle.net sign-in page, showing the login instructions and an empty return-address field](docs/images/setup.png)
+![The local Battle.net setup page with its sign-in button](docs/images/setup.png)
 
 ## Install
 
@@ -25,9 +25,9 @@ Open a terminal in that folder. No dependencies or build step are required.
 
    The local page shown above opens in your browser. Keep the terminal running. This flow attaches a **new authenticator** to your account.
 
-2. **Sign in to Battle.net.** Follow the link on the local page. After signing in, copy the complete address from the browser's address bar. A **404 / File not found** at this point is expected: the address still contains the login token.
+2. **Sign in to Battle.net.** Use the sign-in button. Your browser returns to **Sign-in received** on the local page. If it sends you to account management instead, return to setup and use **Didn't return here? → Sign out … and try again**. That section also offers manual sign-in if needed.
 
-3. **Complete attachment.** Return to the local page, paste the address, and select **Continue and attach authenticator**. Wait for the terminal to confirm success and print the recovery-file location. Keep that file private and safe.
+3. **Complete attachment.** Select **Continue and attach authenticator**. Wait for the terminal to confirm success and print the recovery-file location. Keep that file private and safe.
 
 4. **Add it to 1Password.** Run:
 

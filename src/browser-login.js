@@ -1,21 +1,28 @@
 import { randomBytes } from 'node:crypto';
 import http from 'node:http';
 import { parseSsoInput } from './modern.js';
-import { renderLoginPage, renderReceivedPage } from './login-page.js';
+import {
+  buildBattleNetLoginUrl,
+  renderLoginPage,
+  renderConfirmationPage,
+  renderReceivedPage,
+} from './login-page.js';
 import { openBrowser } from './open-browser.js';
 
-// Keep existing imports working after separating the page and browser launcher.
 export { BATTLE_NET_LOGIN_URL } from './login-page.js';
 export { browserCommand, openBrowser } from './open-browser.js';
 
 const LOGIN_TIMEOUT_MS = 10 * 60_000;
 const MAX_FORM_BYTES = 8192;
 const INVALID_TOKEN_MESSAGE =
-  'No valid login token found. Copy the complete final localhost address after signing in.';
+  'No valid login token found. Try signing in again, or paste the complete final return address.';
 
 function setPrivateResponseHeaders(response) {
   response.setHeader('Cache-Control', 'no-store');
-  response.setHeader('Referrer-Policy', 'no-referrer');
+  // Keep the Origin header on local form POSTs. `no-referrer` makes browsers
+  // send Origin: null, which fails our same-origin check. External links still
+  // receive no referrer under this policy.
+  response.setHeader('Referrer-Policy', 'same-origin');
   response.setHeader('X-Content-Type-Options', 'nosniff');
   response.setHeader(
     'Content-Security-Policy',
@@ -53,9 +60,9 @@ async function readForm(request) {
 }
 
 /**
- * Start one temporary loopback login session.
- * `token` resolves when a valid form is submitted; `cancel()` closes the session.
- * This server receives the login token only. Enrollment happens in enroll.js.
+ * Receive a browser callback, then wait for the user's attachment confirmation.
+ * `token` resolves only after confirmation; `cancel()` closes the session.
+ * Enrollment itself happens in enroll.js.
  */
 export async function startBrowserLogin({ timeout = LOGIN_TIMEOUT_MS, signal } = {}) {
   if (!Number.isSafeInteger(timeout) || timeout <= 0) {
@@ -66,8 +73,13 @@ export async function startBrowserLogin({ timeout = LOGIN_TIMEOUT_MS, signal } =
   }
 
   const formPath = `/login/${randomBytes(24).toString('hex')}`;
+  const callbackPath = `${formPath}/callback`;
+  const confirmPath = `${formPath}/confirm`;
   let origin;
   let expectedHost;
+  let callbackHost;
+  let loginUrl;
+  let pendingToken;
   let timer;
   let settled = false;
   let resolveToken;
@@ -77,7 +89,7 @@ export async function startBrowserLogin({ timeout = LOGIN_TIMEOUT_MS, signal } =
     resolveToken = resolve;
     rejectToken = reject;
   });
-  // Callers may still be launching a browser when cancellation occurs.
+  // The browser may still be launching when cancellation occurs.
   token.catch(() => {});
 
   function finish(error, receivedToken) {
@@ -85,10 +97,10 @@ export async function startBrowserLogin({ timeout = LOGIN_TIMEOUT_MS, signal } =
       return;
     }
     settled = true;
+    pendingToken = undefined;
     clearTimeout(timer);
     signal?.removeEventListener('abort', cancel);
     server.close();
-
     if (error) {
       server.closeAllConnections();
       rejectToken(error);
@@ -101,18 +113,64 @@ export async function startBrowserLogin({ timeout = LOGIN_TIMEOUT_MS, signal } =
     finish(new Error('Sign-in cancelled'));
   }
 
+  function showLogin(response, status = 200, errorMessage = '') {
+    response.writeHead(status).end(renderLoginPage({ formPath, loginUrl, errorMessage }));
+  }
+
+  function receiveToken(response, receivedToken) {
+    if (pendingToken && pendingToken !== receivedToken) {
+      response.writeHead(409).end('A sign-in has already been received for this session.');
+      return;
+    }
+    pendingToken = receivedToken;
+    // Strip the token from the address bar before displaying any page. Return to
+    // the canonical origin even when the callback arrived through localhost.
+    response.setHeader('Referrer-Policy', 'no-referrer');
+    response.writeHead(303, { Location: `${origin}${confirmPath}` }).end();
+  }
+
   async function handleRequest(request, response) {
     setPrivateResponseHeaders(response);
-
-    // The random path and exact Host/Origin checks restrict access to this session.
-    if (settled || request.headers.host !== expectedHost || request.url !== formPath) {
+    response.setHeader('Content-Type', 'text/html; charset=utf-8');
+    let url;
+    try {
+      url = new URL(request.url, origin);
+    } catch {
+      response.writeHead(400).end('Invalid request address');
+      return;
+    }
+    const isCallback = url.pathname === callbackPath;
+    const validHost =
+      request.headers.host === expectedHost ||
+      (isCallback && request.headers.host === callbackHost);
+    if (settled || !validHost || url.origin !== origin) {
       response.writeHead(404).end('Not found');
       return;
     }
 
-    response.setHeader('Content-Type', 'text/html; charset=utf-8');
+    if (request.method === 'GET' && isCallback) {
+      try {
+        if (url.searchParams.getAll('ST').length !== 1) {
+          throw new Error('Expected one login token');
+        }
+        receiveToken(response, parseSsoInput(url.href));
+      } catch {
+        showLogin(response, 400, INVALID_TOKEN_MESSAGE);
+      }
+      return;
+    }
+
+    // Only the callback may have a query string. No form or success page needs a token in its URL.
+    if (url.search || ![formPath, confirmPath].includes(url.pathname)) {
+      response.writeHead(404).end('Not found');
+      return;
+    }
     if (request.method === 'GET') {
-      response.end(renderLoginPage(formPath));
+      if (url.pathname === confirmPath && pendingToken) {
+        response.end(renderConfirmationPage(confirmPath));
+      } else {
+        showLogin(response);
+      }
       return;
     }
     if (!isLocalFormSubmission(request, origin)) {
@@ -126,13 +184,18 @@ export async function startBrowserLogin({ timeout = LOGIN_TIMEOUT_MS, signal } =
         response.writeHead(413).end('Request too large');
         return;
       }
-
-      const receivedToken = parseSsoInput(form.get('token'));
+      if (url.pathname === formPath) {
+        receiveToken(response, parseSsoInput(form.get('token')));
+        return;
+      }
+      if (!pendingToken) {
+        showLogin(response, 409, 'Sign in before attaching an authenticator.');
+        return;
+      }
       response.end(renderReceivedPage());
-      finish(null, receivedToken);
+      finish(null, pendingToken);
     } catch {
-      // Do not reflect the submitted address or token into the error page.
-      response.writeHead(400).end(renderLoginPage(formPath, INVALID_TOKEN_MESSAGE));
+      showLogin(response, 400, INVALID_TOKEN_MESSAGE);
     }
   }
 
@@ -144,8 +207,12 @@ export async function startBrowserLogin({ timeout = LOGIN_TIMEOUT_MS, signal } =
     server.listen(0, '127.0.0.1', resolve);
   });
 
-  expectedHost = `127.0.0.1:${server.address().port}`;
+  const port = server.address().port;
+  expectedHost = `127.0.0.1:${port}`;
+  callbackHost = `localhost:${port}`;
   origin = `http://${expectedHost}`;
+  const callbackUrl = `http://${callbackHost}${callbackPath}`;
+  loginUrl = buildBattleNetLoginUrl(callbackUrl);
   timer = setTimeout(() => {
     finish(new Error('Sign-in timed out; run enrollment again'));
   }, timeout);
@@ -153,8 +220,7 @@ export async function startBrowserLogin({ timeout = LOGIN_TIMEOUT_MS, signal } =
   if (signal?.aborted) {
     cancel();
   }
-
-  return { url: `${origin}${formPath}`, token, cancel };
+  return { url: `${origin}${formPath}`, callbackUrl, token, cancel };
 }
 
 export async function loginWithBrowser({

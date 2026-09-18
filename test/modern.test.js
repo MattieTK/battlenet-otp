@@ -1,12 +1,18 @@
 import assert from 'node:assert/strict';
 import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync } from 'node:fs';
+import { get } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 import { browserCommand, startBrowserLogin } from '../src/browser-login.js';
 import { ConfigStore } from '../src/config.js';
 import { enrollWithBrowser } from '../src/enroll.js';
-import { renderLoginPage, renderReceivedPage } from '../src/login-page.js';
+import {
+  buildBattleNetLoginUrl,
+  renderLoginPage,
+  renderConfirmationPage,
+  renderReceivedPage,
+} from '../src/login-page.js';
 import { encodeBase32, getOtpAuthUrl, ModernAPIClient, parseSsoInput } from '../src/index.js';
 
 const SSO = 'EU-synthetic-login-token-1234567890';
@@ -105,40 +111,142 @@ test('malformed successful enrollment responses are backed up before validation 
   await assert.rejects(noToken.exchangeSsoToken(SSO), /bearer token/);
 });
 
+test('login links use a complete loopback callback and reject remote destinations', () => {
+  const callback = 'http://localhost:43210/login/example/callback';
+  const loginUrl = new URL(buildBattleNetLoginUrl(callback));
+  assert.equal(loginUrl.origin, 'https://account.battle.net');
+  assert.equal(loginUrl.searchParams.get('ref'), callback);
+  assert.equal(
+    new URL(buildBattleNetLoginUrl(callback.replace('localhost', '127.0.0.1'))).searchParams.get(
+      'ref',
+    ),
+    callback.replace('localhost', '127.0.0.1'),
+  );
+  for (const invalid of [
+    'https://evil.example/callback',
+    'http://localhost.evil.example:1234/',
+    'http://user:password@localhost:1234/',
+    'http://localhost:1234/?ST=secret',
+    'http://localhost:1234/#token',
+    'http://localhost/',
+  ]) {
+    assert.throws(() => buildBattleNetLoginUrl(invalid));
+  }
+});
+
 test('readable HTML templates escape inserted text and require no remote assets or scripts', () => {
-  const html = renderLoginPage('/login/"<example>', '<script>bad()</script> {{formPath}} $&');
+  const html = renderLoginPage({
+    formPath: '/login/"<example>',
+    loginUrl: 'https://account.battle.net/',
+    errorMessage: '<script>bad()</script> {{formPath}} $&',
+  });
   assert.match(html, /action="\/login\/&quot;&lt;example&gt;"/);
   assert.match(html, /&lt;script&gt;bad\(\)&lt;\/script&gt; {{formPath}} \$&amp;/);
-  for (const page of [renderLoginPage('/login/example'), renderReceivedPage()]) {
+  for (const page of [
+    renderLoginPage({ formPath: '/login/example', loginUrl: 'https://account.battle.net/' }),
+    renderConfirmationPage('/login/example/confirm'),
+    renderReceivedPage(),
+  ]) {
     assert.doesNotMatch(page, /{{[a-zA-Z]+}}/);
     assert.doesNotMatch(page, /<script|<link|<img/);
     assert.match(page, /<style>[\s\S]*color-scheme/);
   }
 });
 
-test('local login page rejects cross-origin submissions and accepts one valid login token', async (t) => {
+function postForm(url, fields = {}, origin = new URL(url).origin) {
+  return fetch(url, {
+    method: 'POST',
+    redirect: 'manual',
+    headers: { Origin: origin, 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams(fields),
+  });
+}
+
+test('manual sign-in rejects cross-origin forms and requires a separate attachment confirmation', async (t) => {
   const session = await startBrowserLogin({ timeout: 5000 });
   t.after(session.cancel);
   const origin = new URL(session.url).origin;
   const page = await fetch(session.url);
   assert.equal(page.headers.get('cache-control'), 'no-store');
+  assert.equal(page.headers.get('referrer-policy'), 'same-origin');
   const html = await page.text();
   assert.match(html, /account\.battle\.net\/login/);
+  assert.match(html, /ref=http%3A%2F%2Flocalhost/);
   assert.match(html, /404 \/ File not found/);
   assert.doesNotMatch(html, /{{[a-zA-Z]+}}/);
   assert.equal((await fetch(`${origin}/wrong-path`)).status, 404);
-  const post = (originValue, token) =>
-    fetch(session.url, {
-      method: 'POST',
-      headers: { Origin: originValue, 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: new URLSearchParams({ token }),
-    });
-  assert.equal((await post('https://evil.example', SSO)).status, 403);
-  assert.equal((await post(origin, 'invalid')).status, 400);
-  const accepted = await post(origin, `http://localhost/?ST=${SSO}`);
+  assert.equal((await postForm(session.url, { token: SSO }, 'https://evil.example')).status, 403);
+  assert.equal((await postForm(session.url, { token: SSO }, 'null')).status, 403);
+  const invalid = await postForm(session.url, { token: '<script>private-token</script>' });
+  assert.equal(invalid.status, 400);
+  assert.doesNotMatch(await invalid.text(), /private-token/);
+  const review = await postForm(session.url, { token: `http://localhost/?ST=${SSO}` });
+  assert.equal(review.status, 303);
+  const confirmationUrl = review.headers.get('location');
+  assert.equal(new URL(confirmationUrl).origin, origin);
+  assert.equal((await postForm(confirmationUrl, {}, 'https://evil.example')).status, 403);
+  assert.equal((await postForm(confirmationUrl, {}, 'null')).status, 403);
+  const accepted = await postForm(confirmationUrl);
   assert.equal(accepted.status, 200);
   assert.equal((await accepted.text()).includes(SSO), false);
   assert.equal(await session.token, SSO);
+});
+
+test('callback captures one token and removes it from the URL before the confirmation page', async (t) => {
+  const session = await startBrowserLogin({ timeout: 5000 });
+  t.after(session.cancel);
+  let confirmed = false;
+  session.token
+    .then(() => {
+      confirmed = true;
+    })
+    .catch(() => {});
+  const callback = new URL(session.callbackUrl);
+  callback.searchParams.set('ST', SSO);
+  const response = await fetch(callback, { redirect: 'manual' });
+  assert.equal(response.status, 303);
+  assert.equal(response.headers.get('cache-control'), 'no-store');
+  assert.equal(response.headers.get('referrer-policy'), 'no-referrer');
+  const confirmationUrl = response.headers.get('location');
+  assert.equal(new URL(confirmationUrl).search, '');
+  assert.equal(new URL(confirmationUrl).origin, new URL(session.url).origin);
+  assert.equal(confirmationUrl.includes(SSO), false);
+  const page = await fetch(confirmationUrl);
+  assert.equal(page.headers.get('referrer-policy'), 'same-origin');
+  const html = await page.text();
+  assert.match(html, /Sign-in received/);
+  assert.match(html, /Continue and attach authenticator/);
+  assert.equal(html.includes(SSO), false);
+  assert.equal(confirmed, false);
+  assert.equal((await fetch(callback, { redirect: 'manual' })).status, 303);
+  callback.searchParams.set('ST', 'EU-another-synthetic-login-token');
+  assert.equal((await fetch(callback, { redirect: 'manual' })).status, 409);
+  assert.equal((await postForm(confirmationUrl)).status, 200);
+  assert.equal(await session.token, SSO);
+});
+
+test('callback rejects invalid tokens, ambiguous parameters, unknown paths and unexpected hosts', async (t) => {
+  const session = await startBrowserLogin({ timeout: 5000 });
+  t.after(session.cancel);
+  for (const query of ['', '?ST=invalid', `?ST=${SSO}&ST=${SSO}`]) {
+    const response = await fetch(`${session.callbackUrl}${query}`, { redirect: 'manual' });
+    assert.equal(response.status, 400);
+    assert.equal((await response.text()).includes(SSO), false);
+  }
+  const wrongPath = new URL(session.callbackUrl);
+  wrongPath.pathname = '/login/unknown/callback';
+  wrongPath.searchParams.set('ST', SSO);
+  assert.equal((await fetch(wrongPath)).status, 404);
+  // Fetch controls the Host header, so use HTTP directly to test an unexpected host.
+  const unexpectedHostStatus = await new Promise((resolve, reject) => {
+    get(session.url, { headers: { Host: 'evil.example' } }, (response) => {
+      response.resume();
+      resolve(response.statusCode);
+    }).on('error', reject);
+  });
+  assert.equal(unexpectedHostStatus, 404);
+  assert.equal((await postForm(`${session.url}/confirm`)).status, 409);
+  assert.equal((await postForm(session.url, { token: 'x'.repeat(9000) })).status, 413);
 });
 
 test('local login times out and supports cancellation', async () => {

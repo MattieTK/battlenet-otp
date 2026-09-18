@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Sign-in received — javascript-bna</title>
+    <style>
+      {{styles}}
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>Sign-in received</h1>
+      <p>Your login token has reached this local setup page. No copying is needed.</p>
+      <p>Continue to create and attach a new authenticator to your Battle.net account.</p>
+      <form action="{{confirmPath}}" method="post">
+        <button type="submit">Continue and attach authenticator</button>
+      </form>
+      <p class="note">
+        The login token stays in memory until you continue or this session ends. Keep the terminal
+        running; it will confirm the enrollment result and recovery-file location.
+      </p>
+    </main>
+  </body>
+</html>

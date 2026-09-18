@@ -12,46 +12,46 @@
   <body>
     <main>
       <h1>Sign in to Battle.net</h1>
-      <p>This will create and attach a new authenticator to your account.</p>
-
-      <ol>
-        <li>
-          <a href="{{loginUrl}}" target="_blank" rel="noopener noreferrer">
-            Open the official Battle.net sign-in page
-          </a>
-          and sign in there.
-        </li>
-        <li>
-          After login, the address will contain <strong>localhost?ST=...</strong>. A
-          <strong>404 / File not found</strong> or unavailable-page error is expected, including
-          when the address still starts with account.battle.net. Copy that complete address from the
-          address bar.
-        </li>
-        <li>
-          Return here, paste it below, and continue. After enrollment, export the OTPAuth URL for
-          1Password or another authenticator.
-        </li>
-      </ol>
-
+      <p>Set up an authenticator for 1Password or another OTP provider.</p>
+      <p>Sign in on Battle.net. Your browser should then return here automatically.</p>
+      <p><a class="button" href="{{loginUrl}}">Sign in to Battle.net</a></p>
       <p class="error" role="alert">{{errorMessage}}</p>
-
-      <form action="{{formPath}}" method="post">
-        <label for="token">Final localhost address or SSO token</label>
-        <input
-          id="token"
-          name="token"
-          type="password"
-          autocomplete="off"
-          spellcheck="false"
-          required
-        />
-        <button type="submit">Continue and attach authenticator</button>
-      </form>
-
       <p class="note">
-        Your password is entered only on battle.net. The login token is sent from this local page to
-        the CLI, then to Battle.net. It is not saved. Keep the CLI running.
+        Your password is entered only on battle.net. You'll confirm attachment after returning here.
+        Keep the terminal running.
       </p>
+
+      <details>
+        <summary>Didn't return here?</summary>
+        <p>
+          If you landed on your account page, you may already be signed in.
+          <a href="{{freshLoginUrl}}">Sign out of the Battle.net website and try again</a>.
+        </p>
+        <p>
+          If you reach an unavailable page or a <strong>404 / File not found</strong>, copy the
+          complete address from its address bar and paste it below. It may still contain the login
+          token needed to continue.
+        </p>
+        <form action="{{formPath}}" method="post">
+          <label for="token">Return address or SSO token</label>
+          <input
+            id="token"
+            name="token"
+            type="password"
+            autocomplete="off"
+            spellcheck="false"
+            required
+          />
+          <button type="submit">Use this sign-in</button>
+        </form>
+        <p>
+          If Battle.net rejects the return address, you can
+          <a href="{{fallbackLoginUrl}}" target="_blank" rel="noopener noreferrer"
+            >try manual sign-in</a
+          >
+          and paste its final address here. That older flow can end on a 404 page.
+        </p>
+      </details>
     </main>
   </body>
 </html>

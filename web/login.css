@@ -37,7 +37,9 @@ input {
   font: inherit;
 }
 
-button {
+button,
+.button {
+  display: inline-block;
   padding: 12px 20px;
   border: 0;
   border-radius: 6px;
@@ -45,6 +47,7 @@ button {
   color: #102038;
   font: inherit;
   cursor: pointer;
+  text-decoration: none;
 }
 
 a:focus-visible,
@@ -64,4 +67,14 @@ button:focus-visible {
 
 .error:empty {
   display: none;
+}
+
+details {
+  margin-top: 32px;
+  border-top: 1px solid #68819f;
+  padding-top: 16px;
+}
+
+summary {
+  cursor: pointer;
 }
