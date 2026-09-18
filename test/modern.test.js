@@ -187,7 +187,7 @@ test('manual sign-in rejects cross-origin forms and requires a separate attachme
   assert.equal((await postForm(confirmationUrl, {}, 'https://evil.example')).status, 403);
   assert.equal((await postForm(confirmationUrl, {}, 'null')).status, 403);
   const accepted = await postForm(confirmationUrl);
-  assert.equal(accepted.status, 200);
+  assert.equal(accepted.status, 303);
   assert.equal((await accepted.text()).includes(SSO), false);
   assert.equal(await session.token, SSO);
 });
@@ -221,7 +221,7 @@ test('callback captures one token and removes it from the URL before the confirm
   assert.equal((await fetch(callback, { redirect: 'manual' })).status, 303);
   callback.searchParams.set('ST', 'EU-another-synthetic-login-token');
   assert.equal((await fetch(callback, { redirect: 'manual' })).status, 409);
-  assert.equal((await postForm(confirmationUrl)).status, 200);
+  assert.equal((await postForm(confirmationUrl)).status, 303);
   assert.equal(await session.token, SSO);
 });
 
@@ -273,6 +273,10 @@ function testConfig(t) {
   return new ConfigStore(join(directory, 'bna.conf'));
 }
 
+function syntheticLogin() {
+  return { token: SSO, showResult() {}, showError() {} };
+}
+
 test('browser enrollment saves the authenticator and recovery file without logging credentials', async (t) => {
   const config = testConfig(t);
   let output = '';
@@ -285,7 +289,7 @@ test('browser enrollment saves the authenticator and recovery file without loggi
   const result = await enrollWithBrowser({
     config,
     client,
-    login: async () => SSO,
+    login: async () => syntheticLogin(),
     stdout: {
       write: (value) => {
         output += value;
@@ -331,7 +335,12 @@ test('if config save fails after attachment, a recovery backup survives and enro
     },
   });
   await assert.rejects(
-    enrollWithBrowser({ config, client, login: async () => SSO, stdout: { write: () => {} } }),
+    enrollWithBrowser({
+      config,
+      client,
+      login: async () => syntheticLogin(),
+      stdout: { write: () => {} },
+    }),
     /Recovery data was saved/,
   );
   assert.equal(enrollments, 1);

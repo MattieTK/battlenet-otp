@@ -25,7 +25,8 @@ li + li {
   margin-top: 12px;
 }
 
-input {
+input,
+textarea {
   box-sizing: border-box;
   width: 100%;
   padding: 12px;
@@ -35,6 +36,12 @@ input {
   background: #1e2c42;
   color: #fff;
   font: inherit;
+}
+
+textarea {
+  min-height: 110px;
+  resize: vertical;
+  font: 14px / 1.5 monospace;
 }
 
 button,
@@ -52,6 +59,7 @@ button,
 
 a:focus-visible,
 input:focus-visible,
+textarea:focus-visible,
 button:focus-visible {
   outline: 3px solid #fff;
   outline-offset: 3px;
@@ -77,4 +85,9 @@ details {
 
 summary {
   cursor: pointer;
+}
+
+.secondary {
+  background: #263750;
+  color: #e7edf8;
 }

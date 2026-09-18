@@ -23,18 +23,23 @@ export async function enrollWithBrowser({
   const recoveryFile = openSync(recoveryPath, 'wx', 0o600);
   let recoveryStarted = false;
   let recoverySaved = false;
+  let recovery;
+  let browser;
+  let attachmentRequested = false;
 
   async function saveRecovery(responseData) {
     // Preserve even a partial file if writing or fsync fails after attachment.
     recoveryStarted = true;
-    writeFileSync(recoveryFile, `${JSON.stringify(responseData, null, 2)}\n`, 'utf8');
+    recovery = `${JSON.stringify(responseData, null, 2)}\n`;
+    writeFileSync(recoveryFile, recovery, 'utf8');
     fsyncSync(recoveryFile);
     recoverySaved = true;
   }
 
   try {
     // 2. Sign in on Battle.net, then exchange the returned SSO login token.
-    const loginToken = await login({ stdout, signal });
+    browser = await login({ stdout, signal });
+    const loginToken = await browser.token;
     stdout.write('Completing Battle.net sign-in...\n');
     const accessToken = await client.exchangeSsoToken(loginToken);
     if (signal?.aborted) {
@@ -43,6 +48,7 @@ export async function enrollWithBrowser({
 
     // 3. Attach once. The client calls saveRecovery before validating the response.
     stdout.write('Attaching the new authenticator...\n');
+    attachmentRequested = true;
     const authenticator = await client.enroll(accessToken, { saveRecovery });
 
     // 4. Store the validated secret and restore code in the normal config file.
@@ -50,8 +56,11 @@ export async function enrollWithBrowser({
       setDefault,
       restoreCode: authenticator.restoreCode,
     });
-    return { ...authenticator, recoveryPath };
+    const resultUrl = browser.showResult({ ...authenticator, recovery });
+    return { ...authenticator, recoveryPath, resultUrl };
   } catch (error) {
+    // The browser gets a safe summary, never an arbitrary exception or response body.
+    browser?.showError({ recovery, attachmentRequested });
     if (recoverySaved) {
       error.message += ` Recovery data was saved to ${recoveryPath}. Do not repeat enrollment.`;
     } else if (recoveryStarted) {

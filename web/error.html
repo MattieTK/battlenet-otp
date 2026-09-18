@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Setup did not finish — Battle.net OTP</title>
+    <style>
+      {{styles}}
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>Setup did not finish</h1>
+      <p>{{message}}</p>
+      <p {{recoveryHidden}}>
+        Recovery data was received.
+        <a href="{{recoveryUrl}}" download>Download the recovery backup</a>
+        before closing this page. Do not repeat enrollment until you have checked the account.
+      </p>
+      <p class="note">The terminal has more details. This page does not retry enrollment.</p>
+      <form action="{{closePath}}" method="post">
+        <button type="submit">Close setup</button>
+      </form>
+    </main>
+  </body>
+</html>

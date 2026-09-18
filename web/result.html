@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Authenticator attached — Battle.net OTP</title>
+    <style>
+      {{styles}}
+    </style>
+    <script src="{{scriptUrl}}" defer></script>
+  </head>
+  <body>
+    <main>
+      <h1>Authenticator attached</h1>
+      <p>Your new authenticator and recovery backup have been saved locally.</p>
+      <ol>
+        <li>Edit your Battle.net login item in 1Password.</li>
+        <li>
+          Add or replace its <strong>One-Time Password</strong> field with the complete setup URL
+          below.
+        </li>
+        <li>Save the item. It should generate an <strong>eight-digit</strong> code.</li>
+      </ol>
+      <label for="setup-url">OTP setup URL</label>
+      <textarea id="setup-url" readonly spellcheck="false">{{otpUrl}}</textarea>
+      <button type="button" data-copy="setup-url">Copy setup URL</button>
+      <p id="copy-status" role="status" aria-live="polite"></p>
+      <p><a href="{{recoveryUrl}}" download>Download recovery backup</a></p>
+      <p class="error">{{accountNotice}}</p>
+      <details>
+        <summary>Use a setup key instead</summary>
+        <p>For providers that ask for individual settings:</p>
+        <label for="setup-key">Setup key</label>
+        <input id="setup-key" value="{{secret}}" readonly spellcheck="false" />
+        <button type="button" data-copy="setup-key">Copy setup key</button>
+        <p>TOTP · SHA-1 · 8 digits · 30 seconds</p>
+        <p>Authenticator serial: {{serial}}</p>
+      </details>
+      <p class="note">
+        Keep the setup value and recovery backup private. This local page stays available for 30
+        minutes, or until you finish setup or stop the terminal.
+      </p>
+      <form action="{{closePath}}" method="post">
+        <button type="submit" class="secondary">Finish setup</button>
+      </form>
+    </main>
+  </body>
+</html>

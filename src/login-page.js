@@ -7,6 +7,9 @@ export const BATTLE_NET_LOGIN_URL = 'https://account.battle.net/login/en/?ref=lo
 const loginTemplate = readFileSync(new URL('../web/login.html', import.meta.url), 'utf8');
 const confirmTemplate = readFileSync(new URL('../web/confirm.html', import.meta.url), 'utf8');
 const receivedTemplate = readFileSync(new URL('../web/received.html', import.meta.url), 'utf8');
+const resultTemplate = readFileSync(new URL('../web/result.html', import.meta.url), 'utf8');
+const errorTemplate = readFileSync(new URL('../web/error.html', import.meta.url), 'utf8');
+const closedTemplate = readFileSync(new URL('../web/closed.html', import.meta.url), 'utf8');
 const styles = readFileSync(new URL('../web/login.css', import.meta.url), 'utf8');
 
 /** Ask Battle.net to return to this session's complete loopback callback address. */
@@ -73,4 +76,28 @@ export function renderConfirmationPage(confirmPath) {
 
 export function renderReceivedPage() {
   return renderTemplate(receivedTemplate);
+}
+
+export function renderResultPage(values) {
+  return renderTemplate(resultTemplate, {
+    ...values,
+    accountNotice: values.requireHealup
+      ? 'Battle.net reports that additional account setup is required. Check your account settings.'
+      : '',
+  });
+}
+
+export function renderErrorPage({ mayBeAttached, hasRecovery, recoveryUrl, closePath }) {
+  return renderTemplate(errorTemplate, {
+    message: mayBeAttached
+      ? 'Battle.net may have attached an authenticator. Check your account before trying again.'
+      : 'Sign-in could not be completed. Start setup again to get a fresh sign-in.',
+    recoveryHidden: hasRecovery ? '' : 'hidden',
+    recoveryUrl,
+    closePath,
+  });
+}
+
+export function renderClosedPage() {
+  return renderTemplate(closedTemplate);
 }

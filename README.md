@@ -1,8 +1,10 @@
 # Battle.net OTP
 
-Set up a Battle.net authenticator for **1Password or another compatible OTP provider**. Runs locally on your computer, with a browser page for sign-in.
+Set up a Battle.net authenticator for **1Password or another compatible OTP provider**. Sign in, attach, and copy your OTP setup value through a local web UI.
 
-![The local Battle.net setup page with its sign-in button](docs/images/setup.png)
+![The result page with the OTP setup URL, copy button, and recovery download](docs/images/result.png)
+
+*Screenshot uses synthetic test data.*
 
 ## Install
 
@@ -23,19 +25,13 @@ Open a terminal in that folder. No dependencies or build step are required.
    node bin/bna.js enroll
    ```
 
-   The local page shown above opens in your browser. Keep the terminal running. This flow attaches a **new authenticator** to your account.
+   Setup opens in your browser. Keep the terminal running. This flow attaches a **new authenticator** to your account.
 
 2. **Sign in to Battle.net.** Use the sign-in button. Your browser returns to **Sign-in received** on the local page. If it sends you to account management instead, return to setup and use **Didn't return here? → Sign out … and try again**. That section also offers manual sign-in if needed.
 
-3. **Complete attachment.** Select **Continue and attach authenticator**. Wait for the terminal to confirm success and print the recovery-file location. Keep that file private and safe.
+3. **Complete attachment.** Select **Continue and attach authenticator**. The page shows the result when setup finishes. Download the recovery backup and keep it private and safe.
 
-4. **Add it to 1Password.** Run:
-
-   ```sh
-   node bin/bna.js show-url
-   ```
-
-   Edit your Battle.net login in 1Password, add a **One-Time Password** field, and paste the complete URL. Save the item. The URL includes the required **eight-digit** setting; treat it like a password.
+4. **Add it to 1Password.** Select **Copy setup URL**. Edit your Battle.net login in 1Password, add or replace its **One-Time Password** field, and paste the complete URL. Save the item, then select **Finish setup** in the browser. The URL includes the required **eight-digit** setting; treat it like a password.
 
 5. **Verify.** Compare the code in 1Password with:
 
@@ -44,6 +40,8 @@ Open a terminal in that folder. No dependencies or build step are required.
    ```
 
    Compare within the same 30-second interval, then test a Battle.net sign-in. Other providers must support **TOTP, SHA-1, eight digits, and a 30-second period**.
+
+To view a saved setup URL again, run `node bin/bna.js show-url`.
 
 For WoW's extra backpack slots, [Blizzard also requires Battle.net Phone Notifications](https://worldofwarcraft.blizzard.com/en-us/news/23964689).
 

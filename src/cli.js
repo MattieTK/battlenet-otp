@@ -148,6 +148,10 @@ export async function runCli(
           print(`New authenticator saved: ${result.serial}`);
           print(`Configuration: ${config.path}`);
           print(`Recovery backup: ${result.recoveryPath}`);
+          if (result.resultUrl) {
+            print(`OTP setup value and recovery download: ${result.resultUrl}`);
+            print('Keep this terminal open until you select Finish setup in the browser.');
+          }
           if (result.requireHealup)
             print(
               'Blizzard reports that additional account setup is required. Check your Battle.net account.',

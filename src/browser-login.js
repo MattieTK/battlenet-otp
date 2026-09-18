@@ -1,11 +1,16 @@
 import { randomBytes } from 'node:crypto';
+import { readFileSync } from 'node:fs';
 import http from 'node:http';
 import { parseSsoInput } from './modern.js';
+import { getOtpAuthUrl } from './utils.js';
 import {
   buildBattleNetLoginUrl,
   renderLoginPage,
   renderConfirmationPage,
   renderReceivedPage,
+  renderResultPage,
+  renderErrorPage,
+  renderClosedPage,
 } from './login-page.js';
 import { openBrowser } from './open-browser.js';
 
@@ -13,6 +18,8 @@ export { BATTLE_NET_LOGIN_URL } from './login-page.js';
 export { browserCommand, openBrowser } from './open-browser.js';
 
 const LOGIN_TIMEOUT_MS = 10 * 60_000;
+const RESULT_TIMEOUT_MS = 30 * 60_000;
+const resultScript = readFileSync(new URL('../web/result.js', import.meta.url), 'utf8');
 const MAX_FORM_BYTES = 8192;
 const INVALID_TOKEN_MESSAGE =
   'No valid login token found. Try signing in again, or paste the complete final return address.';
@@ -61,12 +68,17 @@ async function readForm(request) {
 
 /**
  * Receive a browser callback, then wait for the user's attachment confirmation.
- * `token` resolves only after confirmation; `cancel()` closes the session.
- * Enrollment itself happens in enroll.js.
+ * `token` resolves only after confirmation. Enrollment happens in enroll.js,
+ * which calls showResult or showError to update the waiting browser page.
+ * `cancel()` closes the server and releases its stored result.
  */
-export async function startBrowserLogin({ timeout = LOGIN_TIMEOUT_MS, signal } = {}) {
-  if (!Number.isSafeInteger(timeout) || timeout <= 0) {
-    throw new TypeError('timeout must be a positive integer');
+export async function startBrowserLogin({
+  timeout = LOGIN_TIMEOUT_MS,
+  resultTimeout = RESULT_TIMEOUT_MS,
+  signal,
+} = {}) {
+  if (![timeout, resultTimeout].every((value) => Number.isSafeInteger(value) && value > 0)) {
+    throw new TypeError('timeouts must be positive integers');
   }
   if (signal?.aborted) {
     throw new Error('Sign-in cancelled');
@@ -75,13 +87,20 @@ export async function startBrowserLogin({ timeout = LOGIN_TIMEOUT_MS, signal } =
   const formPath = `/login/${randomBytes(24).toString('hex')}`;
   const callbackPath = `${formPath}/callback`;
   const confirmPath = `${formPath}/confirm`;
+  const resultPath = `${formPath}/result`;
+  const recoveryPath = `${formPath}/recovery`;
+  const scriptPath = `${formPath}/result.js`;
+  const closePath = `${formPath}/close`;
   let origin;
   let expectedHost;
   let callbackHost;
   let loginUrl;
   let pendingToken;
   let timer;
-  let settled = false;
+  let phase = 'login';
+  let result;
+  let recoveryData;
+  let mayBeAttached = false;
   let resolveToken;
   let rejectToken;
 
@@ -92,25 +111,49 @@ export async function startBrowserLogin({ timeout = LOGIN_TIMEOUT_MS, signal } =
   // The browser may still be launching when cancellation occurs.
   token.catch(() => {});
 
-  function finish(error, receivedToken) {
-    if (settled) {
+  function close(error = new Error('Setup closed')) {
+    if (phase === 'closed') {
       return;
     }
-    settled = true;
+    phase = 'closed';
     pendingToken = undefined;
+    result = undefined;
+    recoveryData = undefined;
     clearTimeout(timer);
     signal?.removeEventListener('abort', cancel);
     server.close();
-    if (error) {
-      server.closeAllConnections();
-      rejectToken(error);
-    } else {
-      resolveToken(receivedToken);
-    }
+    rejectToken(error); // Has no effect after the login promise was resolved.
   }
 
   function cancel() {
-    finish(new Error('Sign-in cancelled'));
+    close(new Error('Sign-in cancelled'));
+    server.closeAllConnections();
+  }
+
+  function startResultTimer() {
+    clearTimeout(timer);
+    timer = setTimeout(cancel, resultTimeout);
+  }
+
+  function showResult({ serial, secret, requireHealup, recovery }) {
+    if (phase !== 'working') return;
+    result = { serial, secret, requireHealup, otpUrl: getOtpAuthUrl(serial, secret) };
+    recoveryData = recovery;
+    phase = 'complete';
+    startResultTimer();
+    return `${origin}${resultPath}`;
+  }
+
+  function showError({ recovery, attachmentRequested = false } = {}) {
+    if (phase !== 'working') return;
+    recoveryData = recovery;
+    mayBeAttached = attachmentRequested;
+    phase = 'failed';
+    startResultTimer();
+  }
+
+  function redirect(response, path) {
+    response.writeHead(303, { Location: `${origin}${path}` }).end();
   }
 
   function showLogin(response, status = 200, errorMessage = '') {
@@ -126,7 +169,7 @@ export async function startBrowserLogin({ timeout = LOGIN_TIMEOUT_MS, signal } =
     // Strip the token from the address bar before displaying any page. Return to
     // the canonical origin even when the callback arrived through localhost.
     response.setHeader('Referrer-Policy', 'no-referrer');
-    response.writeHead(303, { Location: `${origin}${confirmPath}` }).end();
+    redirect(response, confirmPath);
   }
 
   async function handleRequest(request, response) {
@@ -143,12 +186,16 @@ export async function startBrowserLogin({ timeout = LOGIN_TIMEOUT_MS, signal } =
     const validHost =
       request.headers.host === expectedHost ||
       (isCallback && request.headers.host === callbackHost);
-    if (settled || !validHost || url.origin !== origin) {
+    if (phase === 'closed' || !validHost || url.origin !== origin) {
       response.writeHead(404).end('Not found');
       return;
     }
 
     if (request.method === 'GET' && isCallback) {
+      if (phase !== 'login') {
+        response.writeHead(409).end('Sign-in has already been confirmed.');
+        return;
+      }
       try {
         if (url.searchParams.getAll('ST').length !== 1) {
           throw new Error('Expected one login token');
@@ -160,13 +207,57 @@ export async function startBrowserLogin({ timeout = LOGIN_TIMEOUT_MS, signal } =
       return;
     }
 
-    // Only the callback may have a query string. No form or success page needs a token in its URL.
-    if (url.search || ![formPath, confirmPath].includes(url.pathname)) {
+    // Secrets stay out of result URLs. Every route belongs to this random session.
+    const paths = [formPath, confirmPath, resultPath, recoveryPath, scriptPath, closePath];
+    if (url.search || !paths.includes(url.pathname)) {
       response.writeHead(404).end('Not found');
       return;
     }
     if (request.method === 'GET') {
-      if (url.pathname === confirmPath && pendingToken) {
+      if (url.pathname === scriptPath && phase === 'complete') {
+        response.setHeader('Content-Type', 'text/javascript; charset=utf-8');
+        response.end(resultScript);
+      } else if (url.pathname === recoveryPath && recoveryData !== undefined) {
+        response.setHeader('Content-Type', 'application/json');
+        response.setHeader(
+          'Content-Disposition',
+          'attachment; filename="battle-net-authenticator-recovery.json"',
+        );
+        response.end(recoveryData);
+      } else if (url.pathname === resultPath && phase !== 'login') {
+        if (phase === 'complete') {
+          // Only the result page loads a script, shipped locally for the copy buttons.
+          response.setHeader(
+            'Content-Security-Policy',
+            `${response.getHeader('Content-Security-Policy')}; script-src 'self'`,
+          );
+          response.end(
+            renderResultPage({
+              ...result,
+              recoveryUrl: recoveryPath,
+              scriptUrl: scriptPath,
+              closePath,
+            }),
+          );
+        } else if (phase === 'failed') {
+          response.end(
+            renderErrorPage({
+              mayBeAttached,
+              hasRecovery: recoveryData !== undefined,
+              recoveryUrl: recoveryPath,
+              closePath,
+            }),
+          );
+        } else {
+          response.end(renderReceivedPage());
+        }
+      } else if (![formPath, confirmPath, resultPath].includes(url.pathname)) {
+        response.writeHead(404).end('Not found');
+      } else if (phase !== 'login') {
+        redirect(response, resultPath);
+      } else if (url.pathname === resultPath) {
+        redirect(response, formPath);
+      } else if (url.pathname === confirmPath && pendingToken) {
         response.end(renderConfirmationPage(confirmPath));
       } else {
         showLogin(response);
@@ -177,11 +268,29 @@ export async function startBrowserLogin({ timeout = LOGIN_TIMEOUT_MS, signal } =
       response.writeHead(403).end('Invalid request origin or method');
       return;
     }
+    if (![formPath, confirmPath, closePath].includes(url.pathname)) {
+      response.writeHead(405).end('Method not allowed');
+      return;
+    }
 
     try {
       const form = await readForm(request);
       if (form === null) {
         response.writeHead(413).end('Request too large');
+        return;
+      }
+      if (url.pathname === closePath) {
+        if (phase === 'working') {
+          response.writeHead(409).end('Wait for enrollment to finish before closing setup.');
+          return;
+        }
+        response.end(renderClosedPage());
+        close();
+        return;
+      }
+      // Repeated clicks and browser refreshes never trigger a second attachment.
+      if (phase !== 'login') {
+        redirect(response, resultPath);
         return;
       }
       if (url.pathname === formPath) {
@@ -192,8 +301,11 @@ export async function startBrowserLogin({ timeout = LOGIN_TIMEOUT_MS, signal } =
         showLogin(response, 409, 'Sign in before attaching an authenticator.');
         return;
       }
-      response.end(renderReceivedPage());
-      finish(null, pendingToken);
+      phase = 'working';
+      startResultTimer();
+      redirect(response, resultPath);
+      resolveToken(pendingToken);
+      pendingToken = undefined;
     } catch {
       showLogin(response, 400, INVALID_TOKEN_MESSAGE);
     }
@@ -214,13 +326,22 @@ export async function startBrowserLogin({ timeout = LOGIN_TIMEOUT_MS, signal } =
   const callbackUrl = `http://${callbackHost}${callbackPath}`;
   loginUrl = buildBattleNetLoginUrl(callbackUrl);
   timer = setTimeout(() => {
-    finish(new Error('Sign-in timed out; run enrollment again'));
+    close(new Error('Sign-in timed out; run enrollment again'));
+    server.closeAllConnections();
   }, timeout);
   signal?.addEventListener('abort', cancel, { once: true });
   if (signal?.aborted) {
     cancel();
   }
-  return { url: `${origin}${formPath}`, callbackUrl, token, cancel };
+  return {
+    url: `${origin}${formPath}`,
+    callbackUrl,
+    resultUrl: `${origin}${resultPath}`,
+    token,
+    showResult,
+    showError,
+    cancel,
+  };
 }
 
 export async function loginWithBrowser({
@@ -228,8 +349,9 @@ export async function loginWithBrowser({
   signal,
   launch = openBrowser,
   timeout,
+  resultTimeout,
 } = {}) {
-  const session = await startBrowserLogin({ signal, timeout });
+  const session = await startBrowserLogin({ signal, timeout, resultTimeout });
   stdout.write(`Sign in using the local browser page:\n${session.url}\n`);
   try {
     try {
@@ -237,8 +359,9 @@ export async function loginWithBrowser({
     } catch {
       stdout.write('Open the local URL above manually to continue.\n');
     }
-    return await session.token;
-  } finally {
+    return session;
+  } catch (error) {
     session.cancel();
+    throw error;
   }
 }
