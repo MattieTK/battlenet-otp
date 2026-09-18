@@ -1,0 +1,10 @@
+node_modules/
+coverage/
+*.tgz
+*.conf
+*.tmp
+bna-enrollment-*.json
+.env
+.env.*
+.DS_Store
+Thumbs.db

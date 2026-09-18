@@ -1,0 +1,59 @@
+{
+  "name": "javascript-bna",
+  "version": "1.0.0",
+  "description": "Set up Battle.net Authenticator for 1Password and compatible OTP providers; local JavaScript enrollment, TOTP and WoW setup guidance",
+  "type": "module",
+  "main": "./src/index.js",
+  "exports": {
+    ".": "./src/index.js"
+  },
+  "bin": {
+    "bna": "./bin/bna.js"
+  },
+  "files": [
+    "src",
+    "bin",
+    "web",
+    "LICENSE",
+    "README.md",
+    "ARCHITECTURE.md",
+    "UPSTREAM.md",
+    "TESTING.md",
+    "docs/images"
+  ],
+  "scripts": {
+    "test": "node --test",
+    "test:coverage": "node --test --experimental-test-coverage",
+    "start": "node bin/bna.js"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "license": "MIT",
+  "keywords": [
+    "battlenet",
+    "battle-net",
+    "blizzard",
+    "world-of-warcraft",
+    "wow",
+    "1password",
+    "authenticator",
+    "otp",
+    "totp",
+    "2fa",
+    "mfa",
+    "password-manager",
+    "bag-slots",
+    "javascript",
+    "nodejs",
+    "python-bna"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/MattieTK/battlenet-otp.git"
+  },
+  "homepage": "https://github.com/MattieTK/battlenet-otp#readme",
+  "bugs": {
+    "url": "https://github.com/MattieTK/battlenet-otp/issues"
+  }
+}

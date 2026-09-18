@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Battle.net sign-in — javascript-bna</title>
+    <!-- The local server inserts web/login.css here. No remote assets are used. -->
+    <style>
+      {{styles}}
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>Sign in to Battle.net</h1>
+      <p>This will create and attach a new authenticator to your account.</p>
+
+      <ol>
+        <li>
+          <a href="{{loginUrl}}" target="_blank" rel="noopener noreferrer">
+            Open the official Battle.net sign-in page
+          </a>
+          and sign in there.
+        </li>
+        <li>
+          After login, the address will contain <strong>localhost?ST=...</strong>. A
+          <strong>404 / File not found</strong> or unavailable-page error is expected, including
+          when the address still starts with account.battle.net. Copy that complete address from the
+          address bar.
+        </li>
+        <li>
+          Return here, paste it below, and continue. After enrollment, export the OTPAuth URL for
+          1Password or another authenticator.
+        </li>
+      </ol>
+
+      <p class="error" role="alert">{{errorMessage}}</p>
+
+      <form action="{{formPath}}" method="post">
+        <label for="token">Final localhost address or SSO token</label>
+        <input
+          id="token"
+          name="token"
+          type="password"
+          autocomplete="off"
+          spellcheck="false"
+          required
+        />
+        <button type="submit">Continue and attach authenticator</button>
+      </form>
+
+      <p class="note">
+        Your password is entered only on battle.net. The login token is sent from this local page to
+        the CLI, then to Battle.net. It is not saved. Keep the CLI running.
+      </p>
+    </main>
+  </body>
+</html>
